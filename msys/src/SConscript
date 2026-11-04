@@ -1,0 +1,295 @@
+Import('env')
+import os
+import sys
+
+env=env.Clone()
+
+opts=Variables()
+opts.Add("MSYS_WITH_LPSOLVE", "include lpsolve support?", os.getenv('MSYS_WITH_LPSOLVE'))
+opts.Add("MSYS_WITH_INCHI", "include inchi support?", os.getenv('MSYS_WITH_INCHI'))
+opts.Add("MSYS_WITH_TNG", "include TNG support?", os.getenv('MSYS_WITH_TNG'))
+opts.Add("MSYS_WITH_BLISS", "include BLISS support?", os.getenv('MSYS_WITH_BLISS'))
+opts.Add("MSYS_WITHOUT_RAPIDJSON", "include rapidjson support?", os.getenv('MSYS_WITHOUT_RAPIDJSON'))
+opts.Add("MSYS_BOOST_SUFFIX", "suffix for boost libraries (e.g. -mt)")
+opts.Add("MSYS_WITH_TCMALLOC", "use tcmalloc allocator", os.getenv('MSYS_WITH_TCMALLOC'))
+opts.Add("MSYS_WITH_LZ4", "support lz4 compression", os.getenv('MSYS_WITH_LZ4'))
+opts.Add("MSYS_WITH_ZSTD", "support zstd compression", os.getenv('MSYS_WITH_ZSTD'))
+
+opts.Update(env)
+
+env.AppendUnique(LIBS=['sqlite3', 'z'])
+
+if env.get('MSYS_WITH_LPSOLVE'):
+    env.AppendUnique(LIBS=['lpsolve55'])
+if env.get('MSYS_WITH_TNG'):
+    env.AppendUnique(LIBS=['tng_io'])
+if env.get('MSYS_WITH_BLISS'):
+    env.AppendUnique(LIBS=['bliss'])
+if env.get('MSYS_WITH_TCMALLOC'):
+    env.AppendUnique(LIBS=['tcmalloc', 'profiler'])
+if env.get('MSYS_WITH_LZ4'):
+    env.AppendUnique(LIBS=['lz4'])
+    env.Append(CPPDEFINES=['MSYS_WITH_LZ4'])
+if env.get('MSYS_WITH_ZSTD'):
+    env.AppendUnique(LIBS=['zstd'])
+    env.Append(CPPDEFINES=['MSYS_WITH_ZSTD'])
+
+# msys uses boost header-only (spirit, fusion, optional, iostreams array
+# device); boost::filesystem and the gzip filter were replaced in
+# molfile/dtrplugin.cxx, so no boost library is linked at runtime.
+boost_libs=[]
+
+coreenv = env.Clone()
+coreenv.AddLibrary('msys-core', Split('''
+append.cxx
+clone.cxx
+override.cxx
+param_table.cxx
+system.cxx
+term_table.cxx
+value.cxx
+'''))
+
+env.Append(LIBS=boost_libs)
+
+msysenv=env
+Export('msysenv')
+
+def split_version(verstr):
+    import re
+    nice_verstr = re.match('([0-9\.]*)', verstr).group(0)
+    return nice_verstr.split('.')
+
+def build_version_hxx( target, source, env):
+    ldict = {}
+    with open(source[0].path) as fp:
+        exec(fp.read(), globals(), ldict)
+    major, minor, micro = split_version(ldict["version"])
+    print("writing", target[0].path)
+    with open(target[0].path, 'w') as fp:
+        print("#define MSYS_VERSION \"%s\"" % ldict["version"], file=fp)
+        for x in ('major', 'minor', 'micro'):
+            u=x.upper()
+            v=int(locals()[x])
+            print("#define MSYS_%s_VERSION %d" % (u,v), file=fp)
+        print("#define MSYS_ABI_VERSION 1", file=fp)
+
+env.Command('version.hxx', 'version.py', build_version_hxx )
+env.AddPythonModule('version.py', prefix='msys')
+
+# flex/bison-generated smiles parser
+lexenv = env.Clone()
+lexenv.Append(CPPDEFINES='YY_NO_INPUT')
+lexenv.Append(CXXFLAGS='-Wno-deprecated-register')
+lexenv.Append(CXXFLAGS='-Wno-sign-compare') # needed for docker/desres build
+lexobjs = lexenv.AddObject('smiles/lexer.cxx')
+smiles_objs = 'smiles/smiles.cxx smiles/parser.cxx'.split()
+
+# sdf parser
+sdfobjs = Split('''
+sdf/export.cxx
+sdf/import.cxx
+''')
+
+lpenv = env.Clone()
+if env.get('MSYS_WITH_LPSOLVE', False):
+    lpobjs = lpenv.AddObject(Split('''
+analyze.cxx
+analyze/bond_orders.cxx
+'''))
+else:
+    lpenv.Append(CPPDEFINES=['MSYS_WITHOUT_LPSOLVE'])
+    lpobjs=lpenv.AddObject(['analyze.cxx'])
+
+if env.get("MSYS_WITH_BLISS"):
+    lpobjs += lpenv.AddObject(Split('''
+analyze/resonant_charge_accel.cpp
+'''))
+else:
+    lpenv.Append(CPPDEFINES=['MSYS_WITHOUT_BLISS'])
+
+if env.get("MSYS_WITH_INCHI"):
+    inchi = env.AddObject('inchi.cxx')
+    env.Append(LIBS=['inchi'])
+else:
+    inchienv = env.Clone()
+    inchienv.Append(CPPDEFINES='MSYS_WITHOUT_INCHI'.split())
+    inchi = inchienv.AddObject('inchi.cxx')
+
+
+jsenv = env.Clone()
+if env.get("MSYS_WITHOUT_RAPIDJSON"):
+    jsenv.Append(CPPDEFINES='MSYS_WITHOUT_RAPIDJSON'.split())
+else:
+    jsenv.Append(CPPDEFINES='MSYS_WITH_RAPID_JSON'.split())
+jsobjs = jsenv.AddObject(['json/import.cxx', 'json/export.cxx'])
+
+zenv = env.Clone()
+if env.get('MSYS_WITH_LZ4'):
+    zenv.Append(CPPDEFINES=['MSYS_WITH_LZ4'])
+if env.get('MSYS_WITH_ZSTD'):
+    zenv.Append(CPPDEFINES=['MSYS_WITH_ZSTD'])
+zobjs = zenv.AddObject(['compression.cxx'])
+
+def get_shlib_version():
+    if env['PLATFORM'] == 'darwin' or os.getenv('BUILD_WHEEL'):
+        # See https://www.sicpers.info/2013/03/how-to-version-a-mach-o-library/
+        # When using env.InstallVersionedLib:
+        #   On OSX, the minor/micro version number cannot be above 256. With
+        #   msys 1.7.256, we get an error like "malformed 32-bit x.y.z version number: 1.7.258"
+        #   or "malformed 64-bit a.b.c.d.e version number 1.7.258.0".
+        # When not using env.InstallVersionedLib, but still using
+        #   SHLIBVERSION, I got different errors like this
+        #   scons: *** [build/lib/libmsys.1_7_258.dylib] AppleLinkInvalidCurrentVersionException : Version component 1_7_258 (from 1_7_258) is not a number
+        # Conclusion: versioned libraries do not work for micro verions above 256 on OSX
+        return ''
+
+    root = Dir('#').abspath
+    ldict = {}
+    with open('%s/src/version.py' % root) as fp:
+        exec(fp.read(), globals(), ldict)
+    return ldict["version"].replace('.', '_')
+
+dtoaenv = env.Clone()
+# new gcc on OS X emits for-loop-analysis warning.
+dtoaenv.Append(CCFLAGS=['-Wno-error'])
+dtoaobjs = dtoaenv.AddObject(Split('''
+fastjson/dtoa/bignum.cc
+fastjson/dtoa/diy-fp.cc
+fastjson/dtoa/fixed-dtoa.cc
+fastjson/dtoa/bignum-dtoa.cc
+fastjson/dtoa/dtoa.cc
+fastjson/dtoa/cached-powers.cc
+fastjson/dtoa/fast-dtoa.cc
+'''))
+
+
+libmsys_env = env.Clone()
+libmsys_env.Append(LIBS=['msys-core'])
+if env.get('MSYS_WITH_LPSOLVE'):
+    libmsys_env.Append(RPATH=['$ORIGIN/lp_solve'])
+
+libmsys_env.AddLibrary('msys', lexobjs + lpobjs + sdfobjs + [inchi] + smiles_objs + dtoaobjs + jsobjs + zobjs + Split('''
+
+smarts.cxx
+analyze/eigensystem.cxx
+analyze/get_fragments.cxx
+analyze/topological_ids.cxx
+analyze/get_bonds_angles_dihedrals.cxx
+
+amber/import_prmtop.cxx
+
+atomsel.cxx
+atomsel/token.cxx
+atomsel/atomsel.cxx
+atomsel/bool.cxx
+atomsel/expr.cxx
+atomsel/key.cxx
+atomsel/within.cxx
+atomsel/query.cxx
+
+cereal.cxx
+dms/dms.cxx
+dms/export_dms.cxx
+dms/import_dms.cxx
+
+ff/exclusions.cxx
+ff/component.cxx
+
+molfile/libmolfile_plugin.c
+molfile/molfile.cxx
+molfile/msys.cxx
+molfile/dtrframe.cxx
+molfile/dtrplugin.cxx
+molfile/dxplugin.cxx
+molfile/dsn6plugin.cxx
+molfile/dcdplugin.c
+molfile/gromacsplugin.cxx
+molfile/rst7plugin.cxx
+molfile/psfplugin.c
+molfile/xyzplugin.c
+molfile/vtfplugin.cxx
+
+fastjson/json.cxx
+fastjson/JSON_parser.c
+fastjson/parse.cxx
+fastjson/print.cxx
+
+elements.cxx
+geom.cxx
+hash.cxx
+
+io.cxx
+
+mae/ff.cxx
+mae/export_mae.cxx
+mae/import_mae.cxx
+mae/mae.cxx
+mae/maeatoms.cxx
+mae/sitemap.cxx
+mae/vdwmap.cxx
+
+mae/ff/angles.cxx
+mae/ff/bonds.cxx
+mae/ff/cmap.cxx
+mae/ff/constraints.cxx
+mae/ff/dihedrals.cxx
+mae/ff/dihedrals6atom.cxx
+mae/ff/exclusions.cxx
+mae/ff/fbhw.cxx
+mae/ff/inplanewags.cxx
+mae/ff/pairs.cxx
+mae/ff/pseudopol.cxx
+mae/ff/restraints.cxx
+mae/ff/vdwtypes.cxx
+mae/ff/virtuals.cxx
+
+mae/destro/Attribute.cxx
+mae/destro/DestroArray.cxx
+mae/destro/DestroBlock.cxx
+mae/destro/Destro.cxx
+mae/destro/DestroNamedBlock.cxx
+mae/destro/DestroRow.cxx
+mae/destro/DestroTop.cxx
+mae/destro/Maeff.cxx
+mae/destro/prep_alchemical_mae.cxx
+mae/destro/Tokenizer.cxx
+mae/destro/Zing.cxx
+
+mol2/assign.cxx
+mol2/export.cxx
+mol2/import.cxx
+
+pdb/pdb.cxx
+pdb/webpdb.c
+
+pfx/graph.cxx
+psf/import.cxx
+psf/export.cxx
+
+schema.cxx
+schema/schema.cxx
+spatial_hash.cxx
+spatial_hash_double.cxx
+
+annotated_system.cxx
+graph.cxx
+import.cxx
+provenance.cxx
+analyze/sssr.cxx
+xyz.cxx
+
+'''), SHLIBVERSION=get_shlib_version())
+
+env.AddHeaders(Glob("*.hxx"), prefix='msys', stage=True)
+env.AddHeaders(Glob("*.hpp"), prefix='msys', stage=True)
+env.AddHeaders(Glob('atomsel/*.h*'), prefix='msys/atomsel')
+env.AddHeaders(Glob('fastjson/*.hxx'), prefix='msys/fastjson', stage=True)
+env.AddHeaders(Glob('pfx/*.hxx'), prefix='msys/pfx')
+env.AddHeaders(Glob('molfile/*.h*'), prefix='msys/molfile', stage=True)
+
+prgenv=env.Clone()
+prgenv.Append(LIBS=['msys', 'msys-core'])
+prgenv.AddProgram('fstime', 'molfile/fstime.cxx')
+prgenv.AddProgram('fsdump', 'molfile/fsdump.cxx')
+

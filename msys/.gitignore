@@ -1,0 +1,8 @@
+build
+/doc/build/
+*.pyc
+*~
+.mypy_cache
+.pytest_cache/
+.vscode/
+tests/.mypy_cache/

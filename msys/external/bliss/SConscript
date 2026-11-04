@@ -1,0 +1,16 @@
+'''
+bliss-0.73 (http://www.tcs.hut.fi/Software/bliss/bliss-0.73.zip) unpacked
+in this directory.  Built as a static archive and linked into libmsys so no
+separate libbliss shared library is shipped.
+'''
+
+Import('env')
+import os
+
+bliss_dir='bliss-0.73'
+if os.path.isdir(bliss_dir):
+    benv = env.Clone()
+    benv.Replace(CCFLAGS='-g -std=c++03 -Wall -O3 -fPIC')
+    benv.AddHeaders(Glob(os.path.join(bliss_dir, '*.hh')), prefix='bliss', stage=True)
+    srcs  = Glob(os.path.join(bliss_dir, '*.cc'))
+    benv.AddLibrary('bliss', srcs, archive=True)

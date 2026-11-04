@@ -1,0 +1,12 @@
+#!/usr/bin/garden-exec
+#{
+# exec garden with -c \
+#    -- sh $0 "$@"
+#}
+
+set -x
+set -e
+./garden-install-helper --exec scons "$@"
+set +e
+set +x
+

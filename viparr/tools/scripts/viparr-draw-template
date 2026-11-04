@@ -1,0 +1,117 @@
+#!/usr/bin/garden-exec
+#{
+# source `dirname $0`/../share/env.sh
+# garden load rdkit/2019.03.1-05c7/lib-python37
+# exec python $0 "$@"
+#}
+
+'''
+Draw topology of template or residue.
+
+If the input filename starts with 'templates', it is treated as a viparr
+template file, and the residue should be the name of a template in the file.
+
+Otherwise, the input is treated as a molecular system, and the residue argument
+is treated as a 0-based unique residue id (not to be confused with the pdb resid),
+as reported by viparr when template matching fails.
+
+Creates a PNG image of a forcefield template, specified by a template file and
+the name of a particular template in that file. The program constructs a
+dot-format text file of the template graph, saves it to the given output path,
+calls the shell command `neato -Tpng dotfile -o pngfile` to convert the dot file
+to a PNG image file using graphviz, saves the image file to the given output
+path, and displays the PNG image using **eog**.
+'''
+
+import os
+import msys
+import viparr
+import subprocess
+
+def parse_args():
+    from argparse import ArgumentParser, RawDescriptionHelpFormatter
+    parser = ArgumentParser(description=__doc__,
+                            formatter_class=RawDescriptionHelpFormatter)
+    parser.add_argument('tplfile', metavar='INPUT_FILE', help='template or structure file')
+    parser.add_argument('tplname', metavar='RESIDUE',    help='template name or residue id')
+    parser.add_argument('--dotfile', default='topology.dot', help="file to write dot graph (default: topology.dot)")
+    parser.add_argument('--pngfile', default='topology.png', help="file to write png graphviz output (default: topology.png)")
+    parser.add_argument('--display', action='store_true', help="use EOG to display file")
+    parser.add_argument('--rdkit', action='store_true', help="write Rdkit rendering instead of graphviz")
+    return parser.parse_args()
+
+def main():
+    args = parse_args()
+    if args.rdkit:
+        if os.path.basename(args.tplfile).startswith('templates'):
+            mol = read_template(args.tplfile, args.tplname)
+            resid = None
+        else:
+            resid = int(args.tplname)
+            mol, resid = read_residue(args.tplfile, resid)
+        draw_molecule_rdkit(mol, args.pngfile, resid=resid)
+    else:
+
+        with open(args.dotfile, 'w') as fp:
+            if os.path.basename(args.tplfile).startswith('templates'):
+                mol = read_template(args.tplfile, args.tplname)
+                fp.write(viparr.SystemToDot(mol))
+            else:
+                resid = int(args.tplname)
+                mol, resid = read_residue(args.tplfile, resid)
+                fp.write(viparr.SystemToDot(mol, resid))
+
+        subprocess.check_call(['neato', '-Tpng', args.dotfile, '-o', args.pngfile])
+    if args.display:
+        subprocess.check_call(['eog', args.pngfile])
+
+def read_template(tplfile, tplname):
+    templates = viparr.ImportTemplates(tplfile)
+    for t in templates:
+        if t.system.residue(0).name == tplname:
+            return t.system
+    raise RuntimeError("Could not find template named %s in file %s" % (tplname, tplfile))
+
+def read_residue(ifile, residue_id):
+    resid = int(residue_id)
+    mol = msys.Load(ifile)
+    res = mol.residue(resid)
+    print("using residue %d: %s%d:%s with %d atoms" % (resid, res.chain.name, res.resid, res.name, res.natoms))
+    # keep track of which residue is the one we selected
+    pname = '_draw_template_residue_target'
+    mol.addAtomProp(pname, int)
+    res.atoms[0][pname] = 1
+
+    mol = mol.clone('withinbonds 1 of residue %d' % resid)
+    atms = mol.select('%s 1' % pname)
+    assert len(atms)==1
+    resid = atms[0].residue.id
+    return mol, resid
+
+def draw_molecule_rdkit(mol, pngfile, resid=None):
+    from rdkit.Chem import AllChem, Draw
+    # handle external atoms
+    for a in mol.atoms:
+        if a.atomic_number < 0:
+            a.atomic_number = 92
+    rdmol = msys.ConvertToRdkit(mol)
+    AllChem.Compute2DCoords(rdmol)
+    svg = Draw.MolsToGridImage([rdmol], useSVG=True, subImgSize=(300,300))
+
+    if pngfile.lower().endswith('svg'):
+        with open(pngfile, 'w') as fp:
+            fp.write(svg)
+    else:
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode='w',
+                                        suffix='.svg',
+                                        delete=True) as tmpfile:
+            tmpfile.write(svg)
+            tmpfile.flush()
+            subprocess.check_call(['convert', tmpfile.name, pngfile])
+
+
+if __name__=='__main__':
+    main()
+
+#! vim: filetype=python

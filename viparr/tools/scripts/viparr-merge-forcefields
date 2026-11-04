@@ -1,0 +1,87 @@
+#!/usr/bin/garden-exec
+#{
+# source `dirname $0`/../share/env.sh
+# exec python $0 "$@"
+#}
+
+"""
+Merges forcefield patches into a source forcefield. Using the ``output_ff`` to
+parametrize a system with ``viparr`` is equivalent to directly specifying the
+merge in the ``viparr`` call. Forcefield patches are merged sequentially into
+the source forcefield in the order in which they are specified.
+
+Plugins are merged in the rules files with the plugins of the patch forcefield
+coming after those of the source forcefield. VDW functional forms, VDW combine
+rules, exclusions rules, and scale factors, if specified in both the source and
+patch forcefields, must agree. Templates in the patch forcefield are added to
+the source forcefield and overwrite those in the source forcefield of the same
+name. Parameters in the patch forcefield overwrite those in the source
+forcefield having the same `type` fields (i.e. matching the same atom types);
+the merged parameter file will begin with the parameters in the patch forcefield
+not found in the source forcefield, followed by the parameters of the source
+forcefield possibly overwritten by ones from the patch matching the same types.
+Cmap tables in the patch forcefield, if present, overwrite all cmap tables in
+the source forcefield.
+"""
+
+import argparse
+import os
+import shutil
+import viparr
+
+class Action(argparse.Action):
+    def __init__(self, option_strings, dest, nargs=None, **kwds):
+        argparse.Action.__init__(self, option_strings, dest, **kwds)
+
+    def __call__(self, parser, namespace, value, option_string):
+        dest = getattr(namespace, self.dest)
+        dest.append((option_string, value))
+
+def parse_args():
+    parser = argparse.ArgumentParser(description=__doc__,
+                            formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("outdir",
+            help="Destination directory")
+    parser.add_argument("-d", "--ffdir",  action=Action, dest='ff', default=[])
+    parser.add_argument("-f", "--ffname", action=Action, dest='ff')
+    parser.add_argument("-m", "--merge",  action=Action, dest='ff')
+    parser.add_argument("-a", "--append", action=Action, dest='ff')
+    parser.add_argument("--clobber", action='store_true')
+    args = parser.parse_args()
+    ffargs = {'-d', '--ffdir', '-f', '--ffname'}
+    if not args.ff:
+        parser.error("Missing forcefield arguments")
+    if args.ff[0][0] not in ffargs:
+        parser.error("Specify parent forcefield first with '-d' or '-f'")
+    if any(ff[0] in ffargs for ff in args.ff[1:]):
+        parser.error("Specify only -a or -m following initial forcefield")
+    return args
+
+def main():
+    args = parse_args()
+    ff_path = viparr.find_forcefield(args.ff[0][1])
+    print("Reading forcefield from", ff_path)
+    ff = viparr.ImportForcefield(ff_path)
+
+    # read patches
+    for f in args.ff[1:]:
+        if f[0] in ('-m', '--merge'):
+            patch = viparr.ImportForcefield(f[1], False)
+            print("Merging '%s'" % f[1])
+            viparr.MergeForcefields(ff, patch, append_only=False)
+        elif f[0] in ('-a', '--append'):
+            patch = viparr.ImportForcefield(f[1], False)
+            print("Appending '%s'" % f[1])
+            viparr.MergeForcefields(ff, patch, append_only=True)
+        else:
+            raise RuntimeError("Unexpected option '%s'" % f[0])
+
+    print("Writing '%s'" % args.outdir)
+    if os.path.exists(args.outdir):
+        shutil.rmtree(args.outdir)
+    viparr.ExportForcefield(ff, args.outdir)
+
+if __name__ == '__main__':
+    main()
+
+# vim: filetype=python

@@ -13,9 +13,11 @@ One conda package that bundles
 
 It replaces the old `ye-ding::msys_viparr 1.7.359 py310h70deae4_3`, which was
 pinned to **python 3.10, numpy < 2 and libboost 1.84**, and whose source
-tarballs (openfiles.mlops.dp.tech) no longer exist. This recipe builds from
-the public GitHub sources against whatever boost / numpy / pybind11 conda-forge
-currently ships, for python 3.10 – 3.13.
+tarballs (openfiles.mlops.dp.tech) no longer exist. The patched sources of
+msys, viparr and bliss are vendored in this repository (`msys/`, `viparr/`,
+`bliss-0.73/`), so the package builds without any external source host,
+against whatever boost / numpy / pybind11 conda-forge currently ships, for
+python 3.10 – 3.13.
 
 ## Built packages (in `output/channel/`)
 
@@ -68,8 +70,8 @@ conda activate msysbuild
 ```
 
 Output goes to `output/channel`; the build log of each run is printed by
-rattler-build. The recipe downloads the three source archives (GitHub ×2,
-tcs.hut.fi) and verifies their sha256.
+rattler-build. The sources are the vendored trees (`path:` sources in the
+recipe); only the conda build/host dependencies are downloaded.
 
 ### Linux
 
@@ -94,11 +96,14 @@ and the package 59 MB; stripped, the package is 3.7 MB).
 ## Layout
 
 ```
+msys/                msys 1.7.359 source tree, patched (SConstruct, src/, python/, tools/, tests/)
+viparr/              viparr 4.7.35 source tree, patched
+bliss-0.73/          bliss 0.73 (linked statically into libmsys; copied to msys/external/bliss/bliss-0.73 at build time)
 recipe/
-  recipe.yaml        rattler-build v1 recipe (sources, deps, tests)
+  recipe.yaml        rattler-build v1 recipe (path sources, deps, tests)
   variants.yaml      python versions to build
   build.sh           scons build of msys, then viparr; moves python pkgs to site-packages
-  patches/
+  patches/           record of the changes applied to the upstream trees (NOT applied by the recipe)
     msys-0001-arm-py312-bliss-xtc.patch   legacy dp.tech patch: ARM (no SSE), py3.12,
                                           bliss SConscript, gromacs xtc reader, test fixes
     msys-0002-modern-toolchain.patch      new, see below
@@ -106,9 +111,29 @@ recipe/
                                           missing <cassert>
     viparr-0002-pythonver-313.patch       new: allow PYTHONVER 313/314
 build_all.sh         driver around rattler-build
+linux_verify/        parity / verification scripts used on the Linux host
 ```
 
-## What `msys-0002-modern-toolchain.patch` changes and why
+Edit the code directly in `msys/` and `viparr/`; the recipe copies these
+directories into its work dir (honouring their `.gitignore`, so a stray
+`build/` is not picked up) and runs `recipe/build.sh` there.
+
+## Source provenance
+
+The vendored trees are exactly the upstream archives below with the patches
+in `recipe/patches/` applied (`patch -p1`, in the listed order):
+
+| tree | archive | sha256 |
+|------|---------|--------|
+| `msys/` | `https://github.com/DEShawResearch/msys/archive/30aa5b6f2c4521e4081281e4210cae6d92bd5f19.tar.gz` | `c6b766a54583f518c2620797a257b638f78b361178b8a58f1285eec6b517d7f7` |
+| `viparr/` | `https://github.com/DEShawResearch/viparr/archive/d0c869df9a44e1fdaf5f1ce44646178c30cff6e5.tar.gz` | `61c65182dc677d9db2399585ee108e1835563fd100491afa5b58a84272c02f28` |
+| `bliss-0.73/` | `http://www.tcs.hut.fi/Software/bliss/bliss-0.73.zip` (unpatched) | `f57bf32804140cad58b1240b804e0dbd68f7e6bf67eba8e0c0fa3a62fd7f0f84` |
+
+To see what differs from upstream today, diff against a fresh extraction of
+the archive; the patch files are a snapshot of that diff as of the import
+and are not maintained once the trees are edited in place.
+
+## What `msys-0002-modern-toolchain.patch` changed and why
 
 * **numpy 2** — `python/numpy_compat.hxx` (new) restores the pre-1.7 flag
   aliases (`NPY_FORCECAST`, `NPY_C_CONTIGUOUS`, `NPY_ALIGNED`,
@@ -160,6 +185,17 @@ PATH).
 * The stk cache round-trip (`DESRES_LOCATION=1`) writes a gzip-compressed
   cache file and reads it back. This is the one code path that differs from
   macOS, since the boost gzip filter it replaces was only active on Linux.
+
+### Rebuild from the vendored trees
+
+After the sources were vendored (recipe `path:` sources instead of archive
+URLs + patches), the osx-arm64 python 3.12 package was rebuilt and compared
+file by file with the one built from the archives: same 242 files, 184
+byte-identical. The other 58 are the installed scripts (differ only in the
+build-prefix shebang that conda relocates at install time) and the Mach-O
+binaries, whose `__TEXT`, `__DATA_CONST` and `__DATA` segments are
+byte-identical; only `LC_UUID`, the code signature and the debug stab entries
+(`.o` paths and mtimes in `__LINKEDIT`) differ. The recipe tests passed.
 
 ### Parity with the package already deployed on `volc`
 

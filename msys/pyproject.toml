@@ -1,0 +1,30 @@
+[build-system]
+requires = ["pytoml>=0.1", "scons", "enscons>=0.23"]
+build-backend = "enscons.api"
+
+[tool.enscons]
+name="msys"
+version="1.7.359"
+packages=["msys"]
+install_requires=["numpy", "wheel"]
+description="Msys tools"
+#description_file="README.rst"
+license="BSD-3"
+classifiers=[
+  "Programming Language :: Python :: 3.10",
+]
+keywords=["packaging", "wheel"]
+author="DESRES"
+url="github.com/DEShawResearch/msys"
+
+#[tool.enscons.entry_points]
+#console_scripts = ["setup2toml = enscons.setup2toml:main"]
+
+#[tool.enscons.extras_require]
+#doc = ["sphinx"]
+#cli = ["click"]
+
+[tool.black]
+include = 'python/|tools/scripts/|tools/validate/|tools/|tests/.*.py'
+exclude = '.*\.cxx|.*\.hxx|.*.dms'
+

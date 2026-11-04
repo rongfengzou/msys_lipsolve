@@ -4,30 +4,25 @@ context:
   name: msys_viparr
   version: "1.7.359"
   viparr_version: "4.7.35"
-  # DEShawResearch/msys master (version 1.7.359), 2025-12-05
-  msys_commit: 30aa5b6f2c4521e4081281e4210cae6d92bd5f19
-  # DEShawResearch/viparr master (version 4.7.35)
-  viparr_commit: d0c869df9a44e1fdaf5f1ce44646178c30cff6e5
+  # Upstream provenance of the vendored trees (see README "Source provenance"):
+  #   msys/       DEShawResearch/msys   30aa5b6f2c4521e4081281e4210cae6d92bd5f19 (2025-12-05)
+  #   viparr/     DEShawResearch/viparr d0c869df9a44e1fdaf5f1ce44646178c30cff6e5
+  #   bliss-0.73/ tcs.hut.fi bliss-0.73.zip
+  # plus the patches in recipe/patches/, already applied.
 
 package:
   name: ${{ name }}
   version: ${{ version }}
 
+# The sources are the vendored, already-patched trees at the repository root;
+# nothing is downloaded for them. recipe/patches/ documents the changes
+# relative to upstream but is not applied here.
 source:
-  - url: https://github.com/DEShawResearch/msys/archive/${{ msys_commit }}.tar.gz
-    sha256: c6b766a54583f518c2620797a257b638f78b361178b8a58f1285eec6b517d7f7
-    patches:
-      - patches/msys-0001-arm-py312-bliss-xtc.patch
-      - patches/msys-0002-modern-toolchain.patch
-  - url: http://www.tcs.hut.fi/Software/bliss/bliss-0.73.zip
-    sha256: f57bf32804140cad58b1240b804e0dbd68f7e6bf67eba8e0c0fa3a62fd7f0f84
+  - path: ../msys
+  - path: ../bliss-0.73
     target_directory: external/bliss/bliss-0.73
-  - url: https://github.com/DEShawResearch/viparr/archive/${{ viparr_commit }}.tar.gz
-    sha256: 61c65182dc677d9db2399585ee108e1835563fd100491afa5b58a84272c02f28
+  - path: ../viparr
     target_directory: viparr
-    patches:
-      - patches/viparr-0001-build-py310plus.patch
-      - patches/viparr-0002-pythonver-313.patch
 
 build:
   number: 0
