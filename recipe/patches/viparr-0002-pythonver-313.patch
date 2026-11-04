@@ -1,0 +1,12 @@
+diff --color -ruN a/external/sconsutils.py b/external/sconsutils.py
+--- a/external/sconsutils.py	2026-11-04 18:17:43
++++ b/external/sconsutils.py	2026-11-04 18:13:18
+@@ -290,7 +290,7 @@
+     opts.Add("OBJDIR", "build product location", 'build')
+     opts.Add("PREFIX", "installation location")
+ 
+-    opts.Add(ListVariable('PYTHONVER', 'python versions', os.getenv('PYTHONVER', ''), ['36', '37', '38', '39', '310', '311', '312']))
++    opts.Add(ListVariable('PYTHONVER', 'python versions', os.getenv('PYTHONVER', ''), ['27', '37', '38', '39', '310', '311', '312', '313', '314']))
+     opts.Update(env)
+ 
+     builddir = env.Dir(env['OBJDIR']).srcnode().abspath

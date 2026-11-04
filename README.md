@@ -1,0 +1,213 @@
+# msys_viparr — conda package of msys + viparr + lpsolve on a current toolchain
+
+One conda package that bundles
+
+| component | version | source |
+|-----------|---------|--------|
+| msys      | 1.7.359 | github.com/DEShawResearch/msys @ `30aa5b6f` (master, 2025-12-05) |
+| viparr    | 4.7.35  | github.com/DEShawResearch/viparr @ `d0c869df` (master) |
+| lpsolve   | 5.5.2.11 | conda-forge `lp_solve` (bond order / formal charge assignment) |
+| bliss     | 0.73    | tcs.hut.fi, linked statically into libmsys (resonant charge acceleration) |
+| rapidjson | conda-forge | fast JSON import/export |
+| xtc reader | — | dp.tech gromacs xtc patch carried over from the old recipe |
+
+It replaces the old `ye-ding::msys_viparr 1.7.359 py310h70deae4_3`, which was
+pinned to **python 3.10, numpy < 2 and libboost 1.84**, and whose source
+tarballs (openfiles.mlops.dp.tech) no longer exist. This recipe builds from
+the public GitHub sources against whatever boost / numpy / pybind11 conda-forge
+currently ships, for python 3.10 – 3.13.
+
+## Built packages (in `output/channel/`)
+
+| subdir | python | file |
+|--------|--------|------|
+| osx-arm64 | 3.10 | `msys_viparr-1.7.359-py310hbd7d6ef_0.conda` |
+| osx-arm64 | 3.11 | `msys_viparr-1.7.359-py311h5f8ada8_0.conda` |
+| osx-arm64 | 3.12 | `msys_viparr-1.7.359-py312h440f24a_0.conda` |
+| osx-arm64 | 3.13 | `msys_viparr-1.7.359-py313h7e60211_0.conda` |
+| linux-64  | 3.10 | `msys_viparr-1.7.359-py310h8e7c8fa_0.conda` |
+| linux-64  | 3.11 | `msys_viparr-1.7.359-py311h48b7412_0.conda` |
+| linux-64  | 3.12 | `msys_viparr-1.7.359-py312h738df08_0.conda` |
+| linux-64  | 3.13 | `msys_viparr-1.7.359-py313hf70daa8_0.conda` |
+
+Each is about 3–4 MB. All eight passed the recipe's tests. On macOS the 3.10,
+3.12 and 3.13 packages, and on Linux the 3.10 and 3.12 packages, were also
+installed into fresh envs from the channel (with current conda-forge numpy 2
+and rdkit) and checked by hand (see Validation).
+
+## Install
+
+```bash
+# from the local channel produced by ./build_all.sh
+conda create -n msys -c /Users/zourongfeng/code_del/msys_lipsolve/output/channel -c conda-forge \
+    msys_viparr python=3.12        # or 3.10 / 3.11 / 3.13
+conda activate msys
+python -c "import msys, viparr; print(msys.version.version, viparr.version.version)"
+```
+
+Run-time dependencies are only `python`, `numpy`, `lp_solve 5.5.*`,
+`libsqlite`, `zlib` and `rdkit` (for `msys.ConvertToRdkit`). **There is no
+run-time boost dependency at all**: boost is used header-only at build time,
+so this package never conflicts with whichever `libboost` version rdkit (or
+anything else) is pinned to. Any numpy ≥ 1.x works at run time because the
+extension is compiled against numpy 2 headers.
+
+To share the package, upload the `.conda` files in `output/channel/osx-arm64/`
+to an anaconda.org channel (`rattler-build upload anaconda ...`) or copy the
+channel directory.
+
+## Build
+
+```bash
+# build env (once; the `msysbuild` env on this machine already has it)
+conda create -n msysbuild -c conda-forge rattler-build
+conda activate msysbuild
+
+./build_all.sh          # all python versions in recipe/variants.yaml
+./build_all.sh 3.12     # one variant
+```
+
+Output goes to `output/channel`; the build log of each run is printed by
+rattler-build. The recipe downloads the three source archives (GitHub ×2,
+tcs.hut.fi) and verifies their sha256.
+
+### Linux
+
+The linux-64 packages were built with the same recipe on the `volc` host
+(ssh alias; x86_64, conda 25.7) in `/vepfs/Baymax/rongfeng/msys_viparr_build`,
+using the TUNA conda-forge mirror (8 MB/s there, vs 0.4 MB/s from upstream):
+
+```bash
+ssh volc
+export PATH=/vepfs/Baymax/rongfeng/conda_envs/rattler-build/bin:$PATH
+cd /vepfs/Baymax/rongfeng/msys_viparr_build
+CHANNEL=https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge ./build_all.sh   # ~12 min for 4 variants
+```
+
+The resulting `output/channel/linux-64/` was copied back into this
+repository's channel, so the local channel serves both platforms. The only
+Linux-specific build step is `build.sh` stripping debug sections from the
+ELF shared objects: msys compiles with `-g`, and on Linux the DWARF data
+ends up inside the `.so` files (the unstripped `_msys` extension was 61 MB
+and the package 59 MB; stripped, the package is 3.7 MB).
+
+## Layout
+
+```
+recipe/
+  recipe.yaml        rattler-build v1 recipe (sources, deps, tests)
+  variants.yaml      python versions to build
+  build.sh           scons build of msys, then viparr; moves python pkgs to site-packages
+  patches/
+    msys-0001-arm-py312-bliss-xtc.patch   legacy dp.tech patch: ARM (no SSE), py3.12,
+                                          bliss SConscript, gromacs xtc reader, test fixes
+    msys-0002-modern-toolchain.patch      new, see below
+    viparr-0001-build-py310plus.patch     legacy: python-version parsing, toolchain env,
+                                          missing <cassert>
+    viparr-0002-pythonver-313.patch       new: allow PYTHONVER 313/314
+build_all.sh         driver around rattler-build
+```
+
+## What `msys-0002-modern-toolchain.patch` changes and why
+
+* **numpy 2** — `python/numpy_compat.hxx` (new) restores the pre-1.7 flag
+  aliases (`NPY_FORCECAST`, `NPY_C_CONTIGUOUS`, `NPY_ALIGNED`,
+  `NPY_INOUT_ARRAY`) and adds `PyObject*` overloads of
+  `PyArray_DIM/DATA/TYPE/NDIM`, which numpy 2 only provides for
+  `PyArrayObject*`. msys passes `PyObject*` at ~60 call sites; the shim avoids
+  touching them. Included after the numpy header in `pfx.cxx`, `system.cxx`
+  and the three `molfile/*.cxx` files. Guarded by `NPY_ABI_VERSION >= 2`, so
+  the same source still builds against numpy 1.
+* **no boost at run time** — msys used two compiled boost libraries:
+  `boost_filesystem` and `boost_iostreams` (the gzip filter), both only in
+  `src/molfile/dtrplugin.cxx` (stk file handling and its on-disk cache).
+  They are replaced by POSIX calls (`lstat`/`readlink`, `mkstemp`, `rename`)
+  and by msys's own zlib-based `compression.hxx` streams, which already
+  auto-detect gzip. `src/SConscript` links no `boost_*` library any more
+  (`boost_system` has been header-only since 1.69 anyway), and the unused
+  `<boost/filesystem.hpp>` include in `tools/bin/mae2dms.cxx` is dropped.
+  The remaining boost use (spirit/qi, fusion, optional, tuple, numeric cast,
+  iostreams array device) is header-only, so the recipe depends on
+  `libboost-headers` in `host` only and exports no `libboost` run pin.
+  Verified: relative stk paths resolve, the stk cache is written and read
+  back (`DESRES_LOCATION=1 DTRPLUGIN_VERBOSE=1`), and `otool -L libmsys.dylib`
+  shows only sqlite3, zlib, lpsolve55 and libc++.
+* **newer libc++** — `#include <iterator>` for `std::back_inserter`
+  (`src/pfx/pfx.hxx`, `src/mol2/export.cxx`, five `tests/*.cxx`) and
+  `<cstdlib>/<cmath>` for `std::abs` in the xtc reader (`src/molfile/gromacs.h`).
+* **bliss** — built as a static archive and linked into `libmsys`, so the
+  package ships no `libbliss.dylib` / `include/bliss` that would clash with
+  the conda-forge `bliss` package.
+* `external/sconsutils.py` — PYTHONVER list extended to 313 / 314.
+
+`build.sh` adds `-I$PREFIX/include/lpsolve` instead of symlinking
+`include/lp_solve` into the package (msys already falls back to `<lp_lib.h>`),
+builds and runs `test_hash` (ThreeRoe hash check), and rewrites the
+`#!/usr/bin/env python` shebang of the installed `dms-*` / `viparr*` scripts
+to the environment's own python, so `/path/to/env/bin/dms-info` works without
+activating the environment (the old package picked whatever `python` was on
+PATH).
+
+## Validation
+
+### linux-64 (fresh envs from the channel, python 3.10 and 3.12, numpy 2.2 / 2.5, rdkit 2026.09)
+
+* Installs beside conda-forge rdkit (boost 1.90) with no conflict;
+  `ldd libmsys.so` shows only sqlite3, zlib, lpsolve55.
+* imports, lpsolve bond-order assignment (jandor-bad.sdf gives +1 / −1),
+  `positions` under numpy 2, `ConvertToRdkit`, CLI scripts by absolute path
+  without activation, viparr `testViparrParametrizeFragment`: all pass.
+* The stk cache round-trip (`DESRES_LOCATION=1`) writes a gzip-compressed
+  cache file and reads it back. This is the one code path that differs from
+  macOS, since the boost gzip filter it replaces was only active on Linux.
+
+### Parity with the package already deployed on `volc`
+
+The envs on `volc` (`fep_166`, `atom_mapper`, `fepfixer*`, ...) use
+`msys_viparr_lpsolve55 1.7.359 py310h1eb418a_4` from the internal quetz
+channel `baymax` (Jan 2025). It is the same msys/viparr source version but
+pinned to python 3.10, numpy < 2 and one exact `libboost 1.86.0` build.
+`linux_verify/parity.py` (34 probes on identical inputs) was run in
+`fep_166` and in a fresh python 3.10 env from this channel:
+
+* 33 of 34 results identical; the only difference is the python patch
+  level (3.10.20 vs 3.10.22).
+* Identical: msys/viparr versions, lpsolve formal charges and bond orders on
+  jandor-bad.sdf, atom-selection counts on ww.dms (7 queries), position
+  hashes before/after a DMS round trip, aromaticity/SSSR/SMARTS counts,
+  mae and multi-SDF loading, `pfx.aligned_rmsd` rotation and rmsd, dtr frame
+  coordinates, rdkit SMILES, and the full viparr parametrization of ww.dms
+  with amber99 + tip4p (11 tables with identical term counts, identical
+  per-atom charge hash, identical stretch parameters, 46 nonbonded params).
+* Same feature set: lpsolve yes, InChI no, in both.
+
+### osx-arm64 (python 3.12, numpy 2.5.4, boost headers 1.90/1.92, pybind11 3.1)
+
+* The built `.conda` installs into a fresh env next to conda-forge
+  `rdkit 2026.09.1` (which pins `libboost 1.90`) with no conflict, and
+  `otool -L libmsys.dylib` there shows only sqlite3, zlib, lpsolve55, libc++.
+* `import msys, viparr, msys.molfile, msys.pfx` under numpy 2.
+* lpsolve: `AssignBondOrderAndFormalCharge` on `jandor-bad.sdf` gives the
+  expected +1 / −1 formal charges.
+* ThreeRoe hash of `tests/files/ch4.dms` = `14718556392828751187` (ARM port).
+* `pfx.aligned_rmsd` results bit-identical to the old numpy-1 package.
+* viparr `testViparrParametrizeFragment` (amber99 + tip4p on ww.dms) passes.
+* `tests/test_ut.py` (msys): 243 passed / 10 failed. The old package fails
+  the same 10 plus 5 more. The 10 are: InChI (×4) and cereal (×2) not built,
+  lz4/zstd compression (×2) not built, `testLoadDmsMany`, `testMemoryLeakPosVel`
+  (Linux `/proc` parsing) — all identical in the old package.
+* viparr `test/python_tests.py`: 11 failed / 9 passed, every failure also
+  fails in the old package (upstream test rot such as
+  `Forcefield.PluginRegistry` no longer being exported); the new build
+  additionally passes `testViparrSolvate`.
+
+## Known limitations (all pre-existing in the old package)
+
+* `viparr.ExportForcefield` aborts (SIGABRT inside dyld) on macOS, in both the
+  old and this build; import/parametrize paths are unaffected.
+* InChI, cereal, lz4 and zstd support are not compiled in (same as before).
+  Enabling lz4/zstd would only need `lz4-c`, `zstd` in host and
+  `MSYS_WITH_LZ4=1 MSYS_WITH_ZSTD=1` on the scons line.
+* `viparr-rigidify` imports scipy, which is not a declared dependency.
+* Forcefield data is not included; set `VIPARR_FFPATH` to the `ff` dir of a
+  `viparr-ffpublic` checkout.

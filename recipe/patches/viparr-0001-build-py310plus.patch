@@ -1,0 +1,101 @@
+diff --git a/SConscript b/SConscript
+index 460d64c..aa56afc 100644
+--- a/SConscript
++++ b/SConscript
+@@ -1,6 +1,13 @@
+ Import('env')
+ import os
+ 
++
++TOOLCHAIN = ["CC", "CXX", "LD", "AR", "AS", "STRIP"]
++for envvar in TOOLCHAIN:
++    if envvar in os.environ:
++        env.Replace(**{envvar: os.environ[envvar]})
++
++
+ if True:
+     cpp=[]
+     flg=[]
+diff --git a/external/sconsutils.py b/external/sconsutils.py
+index e88ffcb..09b858c 100644
+--- a/external/sconsutils.py
++++ b/external/sconsutils.py
+@@ -160,13 +160,16 @@ def _AddPythonModule(env, *args, **kwds):
+         mod = env.Command(py, s, Copy("$TARGET", "$SOURCE"))
+         _Install(env, 'lib/python/%s' % prefix, mod)
+         for ver in env['PYTHONVER']:
++            major = ver[0]
++            minor = ver[1:]
++            exe = f"python{major}.{minor}"
+             cachedir = env['PYTHON%s_CACHEDIR' % ver]
+             cachefile = '%s/%s/%s.%s' % (
+                     os.path.dirname(py),
+                     cachedir,
+                     os.path.splitext(os.path.basename(py))[0],
+                     env['PYTHON%s_CACHEEXT' % ver])
+-            cachetgt = env.Command(cachefile, mod, 'python%s -m compileall $SOURCE' % '.'.join(ver))
++            cachetgt = env.Command(cachefile, mod, f'{exe} -m compileall $SOURCE')
+             _Install(env, 'lib/python/%s/%s' % (prefix, cachedir), cachetgt)
+         mods.append(mod)
+         _wheel_targets['purelib'].append((mod, wheel_prefix))
+@@ -217,7 +220,9 @@ def _AddWheel(env, tomlfile, pyver='36'):
+ 
+     # obtain wheel tag using specified python version
+     wmod = 'wheel' if pyver.startswith('2') else 'setuptools'
+-    exe = 'python%s' % '.'.join(pyver)
++    major = pyver[0]
++    minor = pyver[1:]
++    exe = f"python{major}.{minor}"
+     #tag = subprocess.check_output([exe, '-c', 'import %s.pep425tags as wp; tags=wp.get_supported(); best=[t for t in tags if "manylinux" not in "".join(t)][0]; print("-".join(best))' % wmod], universal_newlines=True).strip()
+     tag = "cp%s-cp%sm-linux_x86_64" % (pyver, pyver)
+ 
+@@ -285,7 +290,7 @@ def generate(env):
+     opts.Add("OBJDIR", "build product location", 'build')
+     opts.Add("PREFIX", "installation location")
+ 
+-    opts.Add(ListVariable('PYTHONVER', 'python versions', os.getenv('PYTHONVER', ''), ['36', '37', '38', '39']))
++    opts.Add(ListVariable('PYTHONVER', 'python versions', os.getenv('PYTHONVER', ''), ['36', '37', '38', '39', '310', '311', '312']))
+     opts.Update(env)
+ 
+     builddir = env.Dir(env['OBJDIR']).srcnode().abspath
+@@ -326,12 +331,15 @@ def generate(env):
+             env.AddMethod(func, name)
+ 
+     for ver in env['PYTHONVER']:
+-        cfg = 'python%s-config' % '.'.join(ver)
+-        exe = 'python%s' % '.'.join(ver)
++        major = ver[0]
++        minor = ver[1:]
++        cfg = 'python%s.%s-config' % (major, minor)
++        exe = 'python%s.%s' % (major, minor)
+         incs=subprocess.check_output([cfg, '--includes'], universal_newlines=True).strip()
+         prefix=subprocess.check_output([cfg, '--prefix'], universal_newlines=True).strip()
+         libs=subprocess.check_output([cfg, '--libs'], universal_newlines=True).strip()
+         incs += ' -I' + subprocess.check_output([exe, '-c', 'import numpy; print(numpy.get_include())'], universal_newlines=True).strip()
++        incs += ' -I' + subprocess.check_output([exe, '-c', 'import pybind11; print(pybind11.get_include())'], universal_newlines=True).strip()
+         kwds = { 'PYTHON%s_PREFIX' % ver : prefix,
+                  'PYTHON%s_CPPFLAGS' % ver : incs,
+                  'PYTHON%s_LDFLAGS' % ver : libs,
+diff --git a/src/postprocess/compile_plugins.cxx b/src/postprocess/compile_plugins.cxx
+index 89426b8..fdb0c98 100644
+--- a/src/postprocess/compile_plugins.cxx
++++ b/src/postprocess/compile_plugins.cxx
+@@ -2,6 +2,7 @@
+ #include "../base.hxx"
+ #include "../ff.hxx"
+ 
++#include <cassert>
+ #include <algorithm>
+ #include <string>
+ 
+diff --git a/src/templated_system.cxx b/src/templated_system.cxx
+index 82b7418..3afc36f 100644
+--- a/src/templated_system.cxx
++++ b/src/templated_system.cxx
+@@ -1,5 +1,6 @@
+ #include "base.hxx"
+ #include "templated_system.hxx"
++#include <cassert>
+ #include <sstream>
+ #include <msys/clone.hxx>
+ #include <msys/param_table.hxx>

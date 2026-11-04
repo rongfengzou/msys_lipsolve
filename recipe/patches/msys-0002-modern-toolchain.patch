@@ -1,0 +1,368 @@
+diff --color -ruN a/external/bliss/SConscript b/external/bliss/SConscript
+--- a/external/bliss/SConscript	2026-11-04 18:17:43
++++ b/external/bliss/SConscript	2026-11-04 18:09:26
+@@ -1,6 +1,7 @@
+ '''
+-Download downloads/bliss-0.73.zip.  Then unpack it in this directory using
+-unzip bliss-0.73.zip.
++bliss-0.73 (http://www.tcs.hut.fi/Software/bliss/bliss-0.73.zip) unpacked
++in this directory.  Built as a static archive and linked into libmsys so no
++separate libbliss shared library is shipped.
+ '''
+ 
+ Import('env')
+@@ -9,8 +10,7 @@
+ bliss_dir='bliss-0.73'
+ if os.path.isdir(bliss_dir):
+     benv = env.Clone()
+-    benv.Replace(CCFLAGS='-g -std=c++03 -Wall --pedantic -O9 -fPIC')
++    benv.Replace(CCFLAGS='-g -std=c++03 -Wall -O3 -fPIC')
+     benv.AddHeaders(Glob(os.path.join(bliss_dir, '*.hh')), prefix='bliss', stage=True)
+     srcs  = Glob(os.path.join(bliss_dir, '*.cc'))
+-    benv.AddLibrary('bliss', srcs)
+-
++    benv.AddLibrary('bliss', srcs, archive=True)
+diff --color -ruN a/external/sconsutils.py b/external/sconsutils.py
+--- a/external/sconsutils.py	2026-11-04 18:17:43
++++ b/external/sconsutils.py	2026-11-04 18:13:18
+@@ -310,7 +310,7 @@
+     opts.Add("OBJDIR", "build product location", 'build')
+     opts.Add("PREFIX", "installation location")
+ 
+-    opts.Add(ListVariable('PYTHONVER', 'python versions', os.getenv('PYTHONVER', ''), ['27', '37', '38', '39', '310', '311', '312']))
++    opts.Add(ListVariable('PYTHONVER', 'python versions', os.getenv('PYTHONVER', ''), ['27', '37', '38', '39', '310', '311', '312', '313', '314']))
+     opts.Update(env)
+ 
+     builddir = env.Dir(env['OBJDIR']).srcnode().abspath
+diff --color -ruN a/python/molfile/molfilemodule.cxx b/python/molfile/molfilemodule.cxx
+--- a/python/molfile/molfilemodule.cxx	2026-11-04 18:17:43
++++ b/python/molfile/molfilemodule.cxx	2026-11-04 18:13:02
+@@ -2,6 +2,7 @@
+ #include <pybind11/numpy.h>
+ #include "molfilemodule.hxx"
+ #include "numpy/arrayobject.h"
++#include "../numpy_compat.hxx"
+ #include <map>
+ #include <string>
+ #include <sstream>
+diff --color -ruN a/python/molfile/reader.cxx b/python/molfile/reader.cxx
+--- a/python/molfile/reader.cxx	2026-11-04 18:17:43
++++ b/python/molfile/reader.cxx	2026-11-04 18:13:02
+@@ -4,6 +4,7 @@
+ #include <vector>
+ #include <stdexcept>
+ #include <numpy/arrayobject.h>
++#include "../numpy_compat.hxx"
+ 
+ using namespace desres::molfile;
+ typedef ssize_t (Reader::*findfunc)(double T) const;
+diff --color -ruN a/python/molfile/writer.cxx b/python/molfile/writer.cxx
+--- a/python/molfile/writer.cxx	2026-11-04 18:17:43
++++ b/python/molfile/writer.cxx	2026-11-04 18:13:02
+@@ -1,5 +1,6 @@
+ #include "molfilemodule.hxx"
+ #include <numpy/arrayobject.h>
++#include "../numpy_compat.hxx"
+ 
+ namespace {
+     using namespace desres::molfile;
+diff --color -ruN a/python/numpy_compat.hxx b/python/numpy_compat.hxx
+--- a/python/numpy_compat.hxx	1970-01-01 09:00:00
++++ b/python/numpy_compat.hxx	2026-11-04 18:13:02
+@@ -0,0 +1,41 @@
++/* Compatibility shim for building the msys python bindings against numpy >= 2.
++ *
++ * Include this immediately after <numpy/ndarrayobject.h> / <numpy/arrayobject.h>.
++ *
++ * numpy 2 removed the pre-1.7 flag aliases (NPY_FORCECAST, ...) and the
++ * macro forms of PyArray_DIM/DATA/TYPE/NDIM that accepted a plain PyObject*.
++ * msys passes PyObject* everywhere, so provide overloads that cast.
++ */
++#ifndef DESRES_MSYS_NUMPY_COMPAT_HXX
++#define DESRES_MSYS_NUMPY_COMPAT_HXX
++
++#if defined(NPY_ABI_VERSION) && NPY_ABI_VERSION >= 0x02000000
++
++#ifndef NPY_FORCECAST
++#define NPY_FORCECAST NPY_ARRAY_FORCECAST
++#endif
++#ifndef NPY_C_CONTIGUOUS
++#define NPY_C_CONTIGUOUS NPY_ARRAY_C_CONTIGUOUS
++#endif
++#ifndef NPY_ALIGNED
++#define NPY_ALIGNED NPY_ARRAY_ALIGNED
++#endif
++#ifndef NPY_INOUT_ARRAY
++#define NPY_INOUT_ARRAY NPY_ARRAY_INOUT_ARRAY
++#endif
++
++static inline int PyArray_NDIM(const PyObject* o) {
++    return PyArray_NDIM(reinterpret_cast<const PyArrayObject*>(o));
++}
++static inline void* PyArray_DATA(const PyObject* o) {
++    return PyArray_DATA(reinterpret_cast<const PyArrayObject*>(o));
++}
++static inline npy_intp PyArray_DIM(const PyObject* o, int i) {
++    return PyArray_DIM(reinterpret_cast<const PyArrayObject*>(o), i);
++}
++static inline int PyArray_TYPE(const PyObject* o) {
++    return PyArray_TYPE(reinterpret_cast<const PyArrayObject*>(o));
++}
++
++#endif /* numpy >= 2 */
++#endif
+diff --color -ruN a/python/pfx.cxx b/python/pfx.cxx
+--- a/python/pfx.cxx	2026-11-04 18:17:43
++++ b/python/pfx.cxx	2026-11-04 18:13:02
+@@ -1,5 +1,6 @@
+ #include "pymod.hxx"
+ #include <numpy/ndarrayobject.h>
++#include "numpy_compat.hxx"
+ #include <pfx/pfx.hxx>
+ 
+ using namespace pybind11;
+diff --color -ruN a/python/system.cxx b/python/system.cxx
+--- a/python/system.cxx	2026-11-04 18:17:43
++++ b/python/system.cxx	2026-11-04 18:13:02
+@@ -2,6 +2,7 @@
+ #include <pybind11/numpy.h>
+ #include <pybind11/stl.h>
+ #include <numpy/ndarrayobject.h>
++#include "numpy_compat.hxx"
+ #include "capsule.hxx"
+ 
+ #include <msys/import.hxx>
+diff --color -ruN a/src/SConscript b/src/SConscript
+--- a/src/SConscript	2026-11-04 18:17:43
++++ b/src/SConscript	2026-11-04 18:31:37
+@@ -34,9 +34,10 @@
+     env.AppendUnique(LIBS=['zstd'])
+     env.Append(CPPDEFINES=['MSYS_WITH_ZSTD'])
+ 
+-bsx=env.get('MSYS_BOOST_SUFFIX', '')
+-boost_libs=[(x+bsx) for x in (
+-    'boost_iostreams', 'boost_filesystem', 'boost_system')]
++# msys uses boost header-only (spirit, fusion, optional, iostreams array
++# device); boost::filesystem and the gzip filter were replaced in
++# molfile/dtrplugin.cxx, so no boost library is linked at runtime.
++boost_libs=[]
+ 
+ coreenv = env.Clone()
+ coreenv.AddLibrary('msys-core', Split('''
+diff --color -ruN a/src/mol2/export.cxx b/src/mol2/export.cxx
+--- a/src/mol2/export.cxx	2026-11-04 18:17:43
++++ b/src/mol2/export.cxx	2026-11-04 18:13:02
+@@ -1,3 +1,4 @@
++#include <iterator>
+ #include "../mol2.hxx"
+ #include "../elements.hxx"
+ #include "../clone.hxx"
+diff --color -ruN a/src/molfile/dtrplugin.cxx b/src/molfile/dtrplugin.cxx
+--- a/src/molfile/dtrplugin.cxx	2026-11-04 18:17:43
++++ b/src/molfile/dtrplugin.cxx	2026-11-04 18:31:37
+@@ -72,18 +72,36 @@
+ #include "../types.hxx"
+ 
+ 
+-#define BOOST_FILESYSTEM_VERSION 3
+-#include <boost/filesystem.hpp>
+-#include <boost/iostreams/filtering_stream.hpp>
+-#include <boost/iostreams/device/file_descriptor.hpp>
+-#ifndef WIN32 //gzip does not currently work on windows
+-#ifndef __APPLE__ // .. or darwin
+-#include <boost/iostreams/filter/gzip.hpp>
+-#endif
+-#endif
++#include <unistd.h>
++#include <limits.h>
++#include "../compression.hxx"
+ 
+-namespace bfs = boost::filesystem;
+-namespace bio = boost::iostreams;
++// Small POSIX path helpers; replace boost::filesystem so that libmsys does
++// not link against any boost runtime library.
++namespace {
++    std::string path_parent(const std::string& p) {
++        std::string::size_type n = p.rfind('/');
++        if (n == std::string::npos) return ".";
++        if (n == 0) return "/";
++        return p.substr(0, n);
++    }
++    bool path_is_absolute(const std::string& p) {
++        return !p.empty() && p[0] == '/';
++    }
++    // If p is a symlink, return its target (as written in the link),
++    // otherwise return p unchanged.
++    std::string path_resolve_symlink(const std::string& p) {
++        struct stat st;
++        if (lstat(p.c_str(), &st) != 0 || !S_ISLNK(st.st_mode)) return p;
++        std::vector<char> buf(PATH_MAX + 1);
++        ssize_t n = readlink(p.c_str(), buf.data(), PATH_MAX);
++        if (n < 0) return p;
++        std::string target(buf.data(), n);
++        // a relative symlink target is relative to the link's directory
++        if (!path_is_absolute(target)) target = path_parent(p) + "/" + target;
++        return target;
++    }
++}
+ 
+ static const char SERIALIZED_VERSION[] = "0008";
+ 
+@@ -621,13 +639,9 @@
+     file.open(cachepath.c_str());
+     if (file) {
+         if (verbose) printf("StkReader: cache file %s found\n", cachepath.c_str());
+-        bio::filtering_istream in;
+-#ifndef WIN32 //gzip does not currently work on windows
+-#ifndef __APPLE__
+-        in.push(bio::gzip_decompressor(15, 65536));
+-#endif
+-#endif
+-        in.push(file);
++        // transparently handles gzip-compressed and plain cache files
++        std::unique_ptr<std::istream> inp = desres::msys::maybe_compressed_istream(file);
++        std::istream& in = *inp;
+ 
+         try {
+ 	    load_v8(in);
+@@ -743,23 +757,15 @@
+     std::string fname;
+     std::vector<std::string> fnames;
+     // Prep stk absolute path, in case it might be needed.
+-    bfs::path dirname = bfs::path(path());
+-    if (bfs::is_symlink(dirname)) {
+-        dirname = bfs::read_symlink(dirname);
+-    }
+-    dirname = dirname.parent_path();
++    std::string dirname = path_parent(path_resolve_symlink(path()));
+     while (std::getline(input, fname)) {
+         /* strip whitespace?  ignore comment lines? */
+         /* Fix for relative paths here */
+         if (fname.size()) {
+-            if (bfs::path(fname).is_absolute()) {
++            if (path_is_absolute(fname)) {
+                 fnames.push_back(fname);
+             } else {
+-#ifdef WIN32
+-                fnames.push_back((dirname/bfs::path(fname)).string().c_str());
+-#else
+-                fnames.push_back((dirname/bfs::path(fname)).c_str());
+-#endif
++                fnames.push_back(dirname + "/" + fname);
+             }
+         }
+     }
+@@ -852,29 +858,28 @@
+ 
+     /* create temporary file.  We don't care about errors writing
+     * the file because we'll detect any error on rename */
+-    std::string tmpfile(bfs::unique_path(cachepath+"-%%%%-%%%%").string());
+-    int fd = open(tmpfile.c_str(), O_WRONLY|O_CREAT|O_BINARY, 0666);
++    std::string tmpfile(cachepath + "-XXXXXX");
++    int fd = mkstemp(&tmpfile[0]);
+     if (fd<0) {
+       if (verbose)
+         printf("StkReader: warning, creation of cache tmpfile at %s failed: %s\n",
+         tmpfile.c_str(), strerror(errno));
+     } else {
+-      bio::filtering_ostream out;
+-      bio::file_descriptor_sink file(fd, bio::close_handle);
+-#ifndef WIN32 //gzip does not currently work on windows
++      close(fd);
++      std::ofstream file(tmpfile.c_str(), std::ios::binary);
+ #ifndef __APPLE__
+-          out.push(bio::gzip_compressor());
++      // gzip the cache (as the previous boost::iostreams code did on linux)
++      std::unique_ptr<std::ostream> outp = desres::msys::compressed_ostream(file, "gz");
++      dump(*outp);
++#else
++      dump(file);
+ #endif
+-#endif
+-      out.push(file);
+-      dump(out);
+     }
+ 
+     if (fd >= 0) {
+         /* do the rename, check for failure */
+-        boost::system::error_code ec;
+-        bfs::rename(bfs::path(tmpfile), bfs::path(cachepath), ec);
+-        if (ec) {
++        int rc = ::rename(tmpfile.c_str(), cachepath.c_str());
++        if (rc != 0) {
+             if (verbose)
+                 /* FIXME: this should probably be more noticeable... */
+                 printf("StkReader: rename of tmpfile to %s failed: %s\n",
+diff --color -ruN a/src/molfile/gromacs.h b/src/molfile/gromacs.h
+--- a/src/molfile/gromacs.h	2026-11-04 18:17:43
++++ b/src/molfile/gromacs.h	2026-11-04 18:13:02
+@@ -35,6 +35,8 @@
+ #ifndef GROMACS_H
+ #define GROMACS_H
+ 
++#include <cstdlib>
++#include <cmath>
+ #include <math.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+diff --color -ruN a/src/pfx/pfx.hxx b/src/pfx/pfx.hxx
+--- a/src/pfx/pfx.hxx	2026-11-04 18:17:43
++++ b/src/pfx/pfx.hxx	2026-11-04 18:13:02
+@@ -1,6 +1,7 @@
+ #ifndef desres_pfx_hxx
+ #define desres_pfx_hxx
+ 
++#include <iterator>
+ #include "graph.hxx"
+ #include "cell.hxx"
+ #include "glue.hxx"
+diff --color -ruN a/tests/test_contacts.cxx b/tests/test_contacts.cxx
+--- a/tests/test_contacts.cxx	2026-11-04 18:17:43
++++ b/tests/test_contacts.cxx	2026-11-04 18:13:02
+@@ -1,3 +1,4 @@
++#include <iterator>
+ #include "io.hxx"
+ #include "atomsel.hxx"
+ #include "spatial_hash.hxx"
+diff --color -ruN a/tests/test_nearest.cxx b/tests/test_nearest.cxx
+--- a/tests/test_nearest.cxx	2026-11-04 18:17:43
++++ b/tests/test_nearest.cxx	2026-11-04 18:13:02
+@@ -1,3 +1,4 @@
++#include <iterator>
+ #include "dms.hxx"
+ #include "atomsel.hxx"
+ #include "spatial_hash.hxx"
+diff --color -ruN a/tests/test_pbwithin.cxx b/tests/test_pbwithin.cxx
+--- a/tests/test_pbwithin.cxx	2026-11-04 18:17:43
++++ b/tests/test_pbwithin.cxx	2026-11-04 18:13:02
+@@ -1,3 +1,4 @@
++#include <iterator>
+ #include "atomsel.hxx"
+ #include "io.hxx"
+ #include "pfx/pfx.hxx"
+diff --color -ruN a/tests/test_pfx.cxx b/tests/test_pfx.cxx
+--- a/tests/test_pfx.cxx	2026-11-04 18:17:43
++++ b/tests/test_pfx.cxx	2026-11-04 18:13:02
+@@ -1,3 +1,4 @@
++#include <iterator>
+ #include "pfx/pfx.hxx"
+ #include <assert.h>
+ #include <stdio.h>
+diff --color -ruN a/tests/test_system_iter.cxx b/tests/test_system_iter.cxx
+--- a/tests/test_system_iter.cxx	2026-11-04 18:17:43
++++ b/tests/test_system_iter.cxx	2026-11-04 18:13:02
+@@ -1,3 +1,4 @@
++#include <iterator>
+ #include "dms.hxx"
+ #include <cstdio>
+ #include <cassert>
+diff --color -ruN a/tools/bin/mae2dms.cxx b/tools/bin/mae2dms.cxx
+--- a/tools/bin/mae2dms.cxx	2026-11-04 18:17:43
++++ b/tools/bin/mae2dms.cxx	2026-11-04 18:31:37
+@@ -1,6 +1,5 @@
+ #include "mae.hxx"
+ #include <dms.hxx>
+-#include <boost/filesystem.hpp>
+ 
+ #include <string.h>
+ #include <fstream>

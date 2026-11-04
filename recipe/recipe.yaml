@@ -1,0 +1,87 @@
+schema_version: 1
+
+context:
+  name: msys_viparr
+  version: "1.7.359"
+  viparr_version: "4.7.35"
+  # DEShawResearch/msys master (version 1.7.359), 2025-12-05
+  msys_commit: 30aa5b6f2c4521e4081281e4210cae6d92bd5f19
+  # DEShawResearch/viparr master (version 4.7.35)
+  viparr_commit: d0c869df9a44e1fdaf5f1ce44646178c30cff6e5
+
+package:
+  name: ${{ name }}
+  version: ${{ version }}
+
+source:
+  - url: https://github.com/DEShawResearch/msys/archive/${{ msys_commit }}.tar.gz
+    sha256: c6b766a54583f518c2620797a257b638f78b361178b8a58f1285eec6b517d7f7
+    patches:
+      - patches/msys-0001-arm-py312-bliss-xtc.patch
+      - patches/msys-0002-modern-toolchain.patch
+  - url: http://www.tcs.hut.fi/Software/bliss/bliss-0.73.zip
+    sha256: f57bf32804140cad58b1240b804e0dbd68f7e6bf67eba8e0c0fa3a62fd7f0f84
+    target_directory: external/bliss/bliss-0.73
+  - url: https://github.com/DEShawResearch/viparr/archive/${{ viparr_commit }}.tar.gz
+    sha256: 61c65182dc677d9db2399585ee108e1835563fd100491afa5b58a84272c02f28
+    target_directory: viparr
+    patches:
+      - patches/viparr-0001-build-py310plus.patch
+      - patches/viparr-0002-pythonver-313.patch
+
+build:
+  number: 0
+  skip:
+    - win
+  script: build.sh
+
+requirements:
+  build:
+    - ${{ compiler('c') }}
+    - ${{ compiler('cxx') }}
+    - scons
+  host:
+    - python
+    - numpy
+    - pybind11
+    - libboost-headers
+    - lp_solve
+    - rapidjson
+    - zlib
+    - libsqlite
+  run:
+    - python
+    - lp_solve 5.5.*
+    - rdkit
+
+tests:
+  - python:
+      imports:
+        - msys
+        - msys.molfile
+        - msys.pfx
+        - viparr
+  - script:
+      - dms-info -h
+      - dms-select -h
+      - dms-validate -h
+      - dms-version -h
+      - viparr -h
+      - viparr-convert-amber -h
+      - python -c "import msys; s = msys.FromSmilesString('CC'); msys.AssignBondOrderAndFormalCharge(s); assert s.atom(0).formal_charge == 0"
+      - python -c "import numpy, msys; m = msys.FromSmilesString('O'); p = m.positions; assert p.shape == (3, 3), p.shape; print('numpy', numpy.__version__)"
+
+about:
+  homepage: https://github.com/DEShawResearch/msys
+  license: BSD-3-Clause
+  license_file:
+    - LICENSE.txt
+    - viparr/LICENSE.txt
+  summary: msys + viparr (D. E. Shaw Research) with lpsolve bond-order assignment and bliss
+  description: |
+    msys ${{ version }} and viparr ${{ viparr_version }} built from the
+    DEShawResearch GitHub sources, with lpsolve (bond order / formal charge
+    assignment), bliss (resonant charge acceleration), rapidjson, and the
+    gromacs xtc reader. Built against current conda-forge boost, numpy 2 and
+    pybind11; no pin to python 3.10 / numpy 1.
+  repository: https://github.com/DEShawResearch/viparr
