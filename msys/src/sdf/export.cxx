@@ -133,7 +133,10 @@ static std::string format_ct( SystemPtr mol ) {
             format_short(bondbuf  , bnd.i+1);
             format_short(bondbuf+3, bnd.j+1);
         }
-        format_short(bondbuf+6, bnd.aromatic ? 4 : bnd.order);
+        // Always write the (Kekule) bond order, never aromatic type 4, so the
+        // SDF carries the orders assigned by AssignBondOrderAndFormalCharge
+        // (same as the patch_kekulize_sdf of the old dp.tech package).
+        format_short(bondbuf+6, bnd.order);
         if (bnd.stereo<0) {
             format_short(bondbuf+9, -bnd.stereo);
         } else {

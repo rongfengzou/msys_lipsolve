@@ -23,19 +23,21 @@ python 3.10 – 3.13.
 
 | subdir | python | file |
 |--------|--------|------|
-| osx-arm64 | 3.10 | `msys_viparr-1.7.359-py310hbd7d6ef_0.conda` |
-| osx-arm64 | 3.11 | `msys_viparr-1.7.359-py311h5f8ada8_0.conda` |
-| osx-arm64 | 3.12 | `msys_viparr-1.7.359-py312h440f24a_0.conda` |
-| osx-arm64 | 3.13 | `msys_viparr-1.7.359-py313h7e60211_0.conda` |
-| linux-64  | 3.10 | `msys_viparr-1.7.359-py310h8e7c8fa_0.conda` |
-| linux-64  | 3.11 | `msys_viparr-1.7.359-py311h48b7412_0.conda` |
-| linux-64  | 3.12 | `msys_viparr-1.7.359-py312h738df08_0.conda` |
-| linux-64  | 3.13 | `msys_viparr-1.7.359-py313hf70daa8_0.conda` |
+| osx-arm64 | 3.10 | `msys_viparr-1.7.359-py310hbd7d6ef_1.conda` |
+| osx-arm64 | 3.11 | `msys_viparr-1.7.359-py311h5f8ada8_1.conda` |
+| osx-arm64 | 3.12 | `msys_viparr-1.7.359-py312h440f24a_1.conda` |
+| osx-arm64 | 3.13 | `msys_viparr-1.7.359-py313h7e60211_1.conda` |
+| linux-64  | 3.10 | `msys_viparr-1.7.359-py310h8e7c8fa_1.conda` |
+| linux-64  | 3.11 | `msys_viparr-1.7.359-py311h48b7412_1.conda` |
+| linux-64  | 3.12 | `msys_viparr-1.7.359-py312h738df08_1.conda` |
+| linux-64  | 3.13 | `msys_viparr-1.7.359-py313hf70daa8_1.conda` |
 
-Each is about 3–4 MB. All eight passed the recipe's tests. On macOS the 3.10,
-3.12 and 3.13 packages, and on Linux the 3.10 and 3.12 packages, were also
-installed into fresh envs from the channel (with current conda-forge numpy 2
-and rdkit) and checked by hand (see Validation).
+Each is about 3–4 MB. All eight passed the recipe's tests. Build number 1
+(`_1`) is the build with the kekulized SDF export (see below) and the
+`run_constraints` entry that stops conda from installing it next to the old
+`msys_viparr_lpsolve55` package, which ships the same files. The `_0`
+builds were withdrawn. Fresh-env checks (see Validation) were done on both
+platforms.
 
 ## Install
 
@@ -110,8 +112,13 @@ recipe/
     viparr-0001-build-py310plus.patch     legacy: python-version parsing, toolchain env,
                                           missing <cassert>
     viparr-0002-pythonver-313.patch       new: allow PYTHONVER 313/314
+    msys-0003-kekulize-sdf-export.patch   SDF export writes Kekule bond orders, never type 4
+                                          (behaviour of the old dp.tech package, see below)
 build_all.sh         driver around rattler-build
 linux_verify/        parity / verification scripts used on the Linux host
+  parity.py          34 general probes, old vs new package
+  fepfixer_probe.py  Load / SaveDMS / GuessHydrogenPositions / Graph.match /
+                     findContactIds / SDF export probes (the calls fepfixer uses)
 ```
 
 Edit the code directly in `msys/` and `viparr/`; the recipe copies these
@@ -165,6 +172,20 @@ and are not maintained once the trees are edited in place.
   the conda-forge `bliss` package.
 * `external/sconsutils.py` — PYTHONVER list extended to 313 / 314.
 
+## SDF export of aromatic bonds (`msys-0003-kekulize-sdf-export.patch`)
+
+Upstream `src/sdf/export.cxx` writes bond type 4 for any bond whose
+`aromatic` flag is set (bonds read from a type-4 SDF, and every aromatic bond
+of a `FromSmilesString` molecule), even after `AssignBondOrderAndFormalCharge`
+has assigned Kekule orders. The old dp.tech package carried a one-line patch
+(`patch_kekulize_sdf`, tag `msys_viparr/v1.7.359.0_t2` of conda_recipes)
+that writes `bnd.order` instead, so its SDF output is always kekulized.
+`linux_verify/fepfixer_probe.py` caught the difference (phenol from SMILES:
+old `1 2 1 2 1 1 2 ...`, unpatched new `4 4 4 4 4 1 4 ...`); this build
+applies the same change. Consequence: a type-4 SDF loaded and saved
+*without* calling `AssignBondOrderAndFormalCharge` comes out with all
+single bonds, exactly as in the old package.
+
 `build.sh` adds `-I$PREFIX/include/lpsolve` instead of symlinking
 `include/lp_solve` into the package (msys already falls back to `<lp_lib.h>`),
 builds and runs `test_hash` (ThreeRoe hash check), and rewrites the
@@ -216,6 +237,17 @@ pinned to python 3.10, numpy < 2 and one exact `libboost 1.86.0` build.
   with amber99 + tip4p (11 tables with identical term counts, identical
   per-atom charge hash, identical stretch parameters, 46 nonbonded params).
 * Same feature set: lpsolve yes, InChI no, in both.
+* `linux_verify/fepfixer_probe.py` (21 probes: `Load` of dms/sdf/mae,
+  `SaveDMS` round trip with per-table param/term hashes,
+  `GuessHydrogenPositions`, `Graph.match`/`matchAll`/`hash`,
+  `findContactIds` with ids/other/pos/ignore_excluded, SDF export) in the
+  `fepfixer` env (old package, numpy 1.26.4) vs two fresh python 3.10 envs
+  from the `_1` packages, one with numpy 2.2.6 and one with numpy 1.26.4:
+  21/21 identical with numpy 1.26.4, 20/21 with numpy 2 (the numpy version
+  string is the only difference). `parity.py` in the same envs: identical
+  apart from the python patch level (3.10.20 vs 3.10.22) and numpy version.
+  Before `msys-0003` the SDF bond types of aromatic bonds differed (see
+  above).
 
 ### osx-arm64 (python 3.12, numpy 2.5.4, boost headers 1.90/1.92, pybind11 3.1)
 

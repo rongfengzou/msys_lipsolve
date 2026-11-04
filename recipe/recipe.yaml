@@ -25,7 +25,7 @@ source:
     target_directory: viparr
 
 build:
-  number: 0
+  number: 1
   skip:
     - win
   script: build.sh
@@ -48,6 +48,10 @@ requirements:
     - python
     - lp_solve 5.5.*
     - rdkit
+  run_constraints:
+    # the old dp.tech package ships the same site-packages/msys and bin/ files;
+    # never let both be installed in one env
+    - msys_viparr_lpsolve55 <0a0
 
 tests:
   - python:
