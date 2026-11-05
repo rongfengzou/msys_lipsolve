@@ -25,7 +25,7 @@ source:
     target_directory: viparr
 
 build:
-  number: 1
+  number: 2
   skip:
     - win
   script: build.sh
@@ -48,6 +48,17 @@ requirements:
     - python
     - lp_solve 5.5.*
     - rdkit
+    # libsqlite / libzlib: do not take the host run_exports (they pin to
+    # whatever version the build env resolved, e.g. libsqlite >=3.54.1, which
+    # cannot coexist with icu 75 and broke installs into existing envs).
+    # msys uses only the sqlite3 3.5-era API (open_v2/prepare_v2/step/bind/
+    # column) and plain inflate/deflate, so any conda-forge build works.
+    - libsqlite >=3.39,<4.0a0
+    - libzlib >=1.2.13,<2.0a0
+  ignore_run_exports:
+    by_name:
+      - libsqlite
+      - libzlib
   run_constraints:
     # the old dp.tech package ships the same site-packages/msys and bin/ files;
     # never let both be installed in one env

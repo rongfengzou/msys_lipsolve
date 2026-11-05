@@ -23,21 +23,33 @@ python 3.10 – 3.13.
 
 | subdir | python | file |
 |--------|--------|------|
-| osx-arm64 | 3.10 | `msys_viparr-1.7.359-py310hbd7d6ef_1.conda` |
-| osx-arm64 | 3.11 | `msys_viparr-1.7.359-py311h5f8ada8_1.conda` |
-| osx-arm64 | 3.12 | `msys_viparr-1.7.359-py312h440f24a_1.conda` |
-| osx-arm64 | 3.13 | `msys_viparr-1.7.359-py313h7e60211_1.conda` |
-| linux-64  | 3.10 | `msys_viparr-1.7.359-py310h8e7c8fa_1.conda` |
-| linux-64  | 3.11 | `msys_viparr-1.7.359-py311h48b7412_1.conda` |
-| linux-64  | 3.12 | `msys_viparr-1.7.359-py312h738df08_1.conda` |
-| linux-64  | 3.13 | `msys_viparr-1.7.359-py313hf70daa8_1.conda` |
+| osx-arm64 | 3.10 | `msys_viparr-1.7.359-py310hbd7d6ef_2.conda` |
+| osx-arm64 | 3.11 | `msys_viparr-1.7.359-py311h5f8ada8_2.conda` |
+| osx-arm64 | 3.12 | `msys_viparr-1.7.359-py312h440f24a_2.conda` |
+| osx-arm64 | 3.13 | `msys_viparr-1.7.359-py313h7e60211_2.conda` |
+| linux-64  | 3.10 | `msys_viparr-1.7.359-py310h8e7c8fa_2.conda` |
+| linux-64  | 3.11 | `msys_viparr-1.7.359-py311h48b7412_2.conda` |
+| linux-64  | 3.12 | `msys_viparr-1.7.359-py312h738df08_2.conda` |
+| linux-64  | 3.13 | `msys_viparr-1.7.359-py313hf70daa8_2.conda` |
 
-Each is about 3–4 MB. All eight passed the recipe's tests. Build number 1
-(`_1`) is the build with the kekulized SDF export (see below) and the
-`run_constraints` entry that stops conda from installing it next to the old
-`msys_viparr_lpsolve55` package, which ships the same files. The `_0`
-builds were withdrawn. Fresh-env checks (see Validation) were done on both
-platforms.
+Each is about 3–4 MB. All eight passed the recipe's tests. Build history:
+
+* `_0`: first build; withdrawn.
+* `_1`: added the kekulized SDF export (see below) and the `run_constraints`
+  entry that stops conda from installing it next to the old
+  `msys_viparr_lpsolve55` package, which ships the same files; withdrawn.
+* `_2` (current): same code as `_1`, metadata only. The `libsqlite` and
+  `libzlib` run dependencies are now declared by hand (`>=3.39,<4` and
+  `>=1.2.13,<2`) instead of being taken from the host packages'
+  `run_exports`. The exported floor (`libsqlite >=3.54.1`) made the package
+  uninstallable into existing envs: every conda-forge `libsqlite` ≥ 3.54
+  either needs `icu >=78` or forbids icu altogether, while envs holding
+  rdkit 2024.09 / libboost 1.86 / libxml2 are pinned to icu 75. msys only
+  uses the sqlite3 3.5-era API (`sqlite3_open_v2`, `prepare_v2`, `step`,
+  `bind_*`, `column_*`, `exec`, `vfs_register`, `file_control`) and plain
+  `inflate`/`deflate`, so any conda-forge build of either library works.
+
+Fresh-env checks (see Validation) were done on both platforms.
 
 ## Install
 
@@ -50,7 +62,8 @@ python -c "import msys, viparr; print(msys.version.version, viparr.version.versi
 ```
 
 Run-time dependencies are only `python`, `numpy`, `lp_solve 5.5.*`,
-`libsqlite`, `zlib` and `rdkit` (for `msys.ConvertToRdkit`). **There is no
+`libsqlite >=3.39`, `libzlib >=1.2.13` and `rdkit` (for
+`msys.ConvertToRdkit`). **There is no
 run-time boost dependency at all**: boost is used header-only at build time,
 so this package never conflicts with whichever `libboost` version rdkit (or
 anything else) is pinned to. Any numpy ≥ 1.x works at run time because the
@@ -242,12 +255,27 @@ pinned to python 3.10, numpy < 2 and one exact `libboost 1.86.0` build.
   `GuessHydrogenPositions`, `Graph.match`/`matchAll`/`hash`,
   `findContactIds` with ids/other/pos/ignore_excluded, SDF export) in the
   `fepfixer` env (old package, numpy 1.26.4) vs two fresh python 3.10 envs
-  from the `_1` packages, one with numpy 2.2.6 and one with numpy 1.26.4:
+  from the `_1` packages (same binaries as `_2`), one with numpy 2.2.6 and
+  one with numpy 1.26.4:
   21/21 identical with numpy 1.26.4, 20/21 with numpy 2 (the numpy version
   string is the only difference). `parity.py` in the same envs: identical
   apart from the python patch level (3.10.20 vs 3.10.22) and numpy version.
   Before `msys-0003` the SDF bond types of aromatic bonds differed (see
   above).
+* End-to-end (run by the fepfixer session on volc, 2026-11-05): the fepfixer
+  1G9V workflow in a replica of the production env with only the msys
+  package swapped (`_1`, lp_solve 5.5.2.11, numpy 1.26.4, libsqlite 3.53.4)
+  gives the same result as the deployed `msys_viparr_lpsolve55 _4`: all
+  9547 atoms in the same order with zero coordinate shift, all 11 DMS
+  tables and the schema identical except `provenance` (timestamp, paths),
+  which also differs between two reference runs.
+* Installability of `_2` (why it exists): a conda dry-run solve of the
+  production fepfixer env frozen with `conda list --export` (199 exact
+  pins incl. icu 75.1, libsqlite 3.53.4, libboost 1.86, rdkit 2024.09.6,
+  ost_promod), the old package dropped and `msys_viparr _2` added, succeeds
+  and changes nothing else; the same solve with `_1` fails on
+  `libsqlite >=3.54.1` vs `icu 75.1`. Script:
+  `linux_verify/volc_solve_b2.sh` on volc.
 
 ### osx-arm64 (python 3.12, numpy 2.5.4, boost headers 1.90/1.92, pybind11 3.1)
 
